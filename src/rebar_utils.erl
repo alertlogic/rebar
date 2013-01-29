@@ -368,6 +368,8 @@ expand_sh_flag({abort_on_error, Message}) ->
 expand_sh_flag(abort_on_error) ->
     {error_handler,
      fun log_and_abort/2};
+expand_sh_flag({error_handler, F} = ErrorHandler) when is_function(F) ->
+    ErrorHandler;  % custom error handler
 expand_sh_flag(use_stdout) ->
     {output_handler,
      fun(Line, Acc) ->

@@ -432,18 +432,15 @@ download_source(AppDir, {git, Url, ""}) ->
     download_source(AppDir, {git, Url, {branch, "HEAD"}});
 download_source(AppDir, {git, Url, {branch, Branch}}) ->
     ok = filelib:ensure_dir(AppDir),
-    rebar_utils:sh(?FMT("git clone -n ~s ~s", [Url, filename:basename(AppDir)]),
-                   [{cd, filename:dirname(AppDir)}]),
+    git_clone(AppDir, Url),
     rebar_utils:sh(?FMT("git checkout -q origin/~s", [Branch]), [{cd, AppDir}]);
 download_source(AppDir, {git, Url, {tag, Tag}}) ->
     ok = filelib:ensure_dir(AppDir),
-    rebar_utils:sh(?FMT("git clone -n ~s ~s", [Url, filename:basename(AppDir)]),
-                   [{cd, filename:dirname(AppDir)}]),
+    git_clone(AppDir, Url),
     rebar_utils:sh(?FMT("git checkout -q ~s", [Tag]), [{cd, AppDir}]);
 download_source(AppDir, {git, Url, Rev}) ->
     ok = filelib:ensure_dir(AppDir),
-    rebar_utils:sh(?FMT("git clone -n ~s ~s", [Url, filename:basename(AppDir)]),
-                   [{cd, filename:dirname(AppDir)}]),
+    git_clone(AppDir, Url),
     rebar_utils:sh(?FMT("git checkout -q ~s", [Rev]), [{cd, AppDir}]);
 download_source(AppDir, {bzr, Url, Rev}) ->
     ok = filelib:ensure_dir(AppDir),
@@ -470,6 +467,91 @@ download_source(AppDir, {fossil, Url, Version}) ->
                    [{cd, AppDir}]),
     rebar_utils:sh(?FMT("fossil open ~s ~s --nested", [Repository, Version]),
                    []).
+
+git_clone(AppDir, Url) ->
+    git_clone(AppDir, Url, _Attempt = 1).
+
+git_clone(AppDir, Url, Attempt) ->
+    % install a custom error handler that will retry the command after a timeout
+    ErrorHandler = make_git_clone_error_handler(AppDir, Url, Attempt),
+    rebar_utils:sh(?FMT("git clone -n ~s ~s", [Url, filename:basename(AppDir)]),
+                   [{cd, filename:dirname(AppDir)},
+                    {error_handler, ErrorHandler}]).
+
+make_git_clone_error_handler(AppDir, Url, Attempt) ->
+    % TODO, XXX:
+    %    - configurable delay between retries
+    %    - configurable number of retries
+    %    - configurable delay increment (or factor) before each retry
+    MaxAttempts = 10,
+    DelaySecondsBase = 10,
+    fun (Command, {Rc, Output}) ->
+        case is_tolerable_git_clone_error(Output) of
+            true ->
+                ?ERROR("~s failed with error: ~w and output:~n~s~n",
+                       [Command, Rc, Output]),
+                case Attempt =< MaxAttempts of
+                    true ->
+                        % increase delay with each attempt
+                        DelaySeconds = DelaySecondsBase * Attempt,
+                        ?INFO("retrying in ~w seconds...~n", [DelaySeconds]),
+                        timer:sleep(DelaySeconds * 1000),
+                        git_clone(AppDir, Url, Attempt + 1);
+                    false ->
+                        ?ABORT("~s failed after ~w attempts~n", [Command, MaxAttempts])
+                end;
+            false ->
+                ?ABORT("~s failed with error: ~w and output:~n~s~n",
+                       [Command, Rc, Output])
+        end
+    end.
+
+% we frequently see these errors when cloning from GitHub repositories
+is_tolerable_git_clone_error(Error) ->
+    % this one is typical when cloning git:// URLs
+    is_substring(Error, "fatal: unable to connect a socket (Connection timed out)") orelse
+
+    % usually followed by "fatal: The remote end hung up unexpectedly"
+    is_substring(Error, "Read from socket failed: Connection reset by peer") orelse
+    is_substring(Error, "Segmentation fault") orelse
+    is_substring(Error, "Write failed: Broken pipe") orelse
+
+    % these errors appears when cloning git@github.com URLs, e.g.:
+    %
+    %     "ssh: connect to host fs25 port 22: Connection timed out"
+    %     "ssh: connect to host fs25 port 22: No route to host"
+    %
+    % -- we should probably start using regexps...
+    %
+    % usually followed by "fatal: The remote end hung up unexpectedly"
+    is_substring(Error, " port 22: Connection timed out") orelse
+    is_substring(Error, " port 22: No route to host") orelse
+
+    % these errors appears when cloning https:// URLs
+    %
+    % usually followed by "fatal: The remote end hung up unexpectedly"
+    is_substring(Error, "error: RPC failed; result=22, HTTP code = 405") orelse
+    is_substring(Error, "error: RPC failed; result=7, HTTP code = 0") orelse
+
+    % usually followed by "fatal: HTTP request failed"
+    is_substring(Error, "error: The requested URL returned error: 403 while accessing") orelse
+    is_substring(Error, "error: The requested URL returned error: 503 while accessing") orelse
+    is_substring(Error, "error: The requested URL returned error: 502 while accessing") orelse
+
+    % usually followed by "fatal: The remote end hung up unexpectedly"
+    is_substring(Error, "ssh_exchange_identification: Connection closed by remote host") orelse
+    is_substring(Error, "ssh_exchange_identification: read: Connection reset by peer") orelse
+
+    % preceeded by "fatal: remote error: "
+    is_substring(Error, "Storage server temporarily offline. See http://status.github.com for GitHub system status.") orelse
+
+    % we've even seen that string printed alone witout any extra details
+    is_substring(Error, "fatal: The remote end hung up unexpectedly") orelse
+
+    false.
+
+is_substring(String, SubString) ->
+    string:str(String, SubString) =/= 0.
 
 update_source(Config, Dep) ->
     %% It's possible when updating a source, that a given dep does not have a
