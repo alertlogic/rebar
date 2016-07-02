@@ -49,10 +49,10 @@ set_level(Level) ->
 log(Level, Str, Args) ->
     {ok, LogLevel} = application:get_env(rebar, log_level),
     case should_log(LogLevel, Level) of
-        true ->
-            io:format(log_prefix(Level) ++ Str, Args);
         false ->
-            ok
+            ok;
+        Device ->
+            io:format(Device, log_prefix(Level) ++ Str, Args)
     end.
 
 default_level() -> error_level().
@@ -67,13 +67,13 @@ valid_level(Level) ->
 error_level() -> 0.
 debug_level() -> 3.
 
-should_log(debug, _)     -> true;
+should_log(debug, _)     -> standard_io;
 should_log(info, debug)  -> false;
-should_log(info, _)      -> true;
+should_log(info, _)      -> standard_io;
 should_log(warn, debug)  -> false;
 should_log(warn, info)   -> false;
-should_log(warn, _)      -> true;
-should_log(error, error) -> true;
+should_log(warn, _)      -> standard_error;
+should_log(error, error) -> standard_error;
 should_log(error, _)     -> false;
 should_log(_, _)         -> false.
 
