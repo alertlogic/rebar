@@ -353,15 +353,12 @@ is_app_available(Config, App, VsnRegex, Path, _IsRaw = false) ->
                           [App, VsnRegex, App, Vsn, Path]),
                     case re:run(Vsn, VsnRegex, [{capture, none}]) of
                         match ->
-                            {Config2, {true, Path}};
+                            ok;
                         nomatch ->
-                            ?WARN("~s has version ~p; requested regex was ~s\n",
-                                  [AppFile, Vsn, VsnRegex]),
-                            {Config2,
-                             {false, {version_mismatch,
-                                      {AppFile,
-                                       {expected, VsnRegex}, {has, Vsn}}}}}
-                    end;
+                            ?ERROR("~s has version ~p; requested regex was ~s\n",
+                                  [AppFile, Vsn, VsnRegex])
+                    end,
+                    {Config2, {true, Path}};
                 {Config1, OtherApp} ->
                     ?WARN("~s has application id ~p; expected ~p\n",
                           [AppFile, OtherApp, App]),
